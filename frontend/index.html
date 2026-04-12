@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fuel-Insight-MVP</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <div v-if="!isAuthenticated" class="auth-shell">
+      <section class="auth-card">
+        <h1>Fuel Insight</h1>
+        <p class="muted">Faça login ou cadastro para acessar a plataforma.</p>
+
+        <div class="tabs">
+          <button :class="{active: authMode==='login'}" @click="authMode='login'">Login</button>
+          <button :class="{active: authMode==='register'}" @click="authMode='register'">Cadastro</button>
+        </div>
+
+        <template v-if="authMode==='login'">
+          <label>
+            <span class="label-title">Username <span class="help-icon" title="Usuario cadastrado para acessar o sistema.">?</span></span>
+            <input v-model="loginForm.username" />
+          </label>
+          <label>
+            <span class="label-title">Password <span class="help-icon" title="Senha do usuario.">?</span></span>
+            <input type="password" v-model="loginForm.password" />
+          </label>
+          <button class="full" @click="loginUser">Entrar</button>
+          <p class="result">{{ loginResult }}</p>
+        </template>
+
+        <template v-else>
+          <label>
+            <span class="label-title">Username <span class="help-icon" title="Nome unico para login.">?</span></span>
+            <input v-model="registerForm.username" />
+          </label>
+          <label>
+            <span class="label-title">Password <span class="help-icon" title="Senha da conta.">?</span></span>
+            <input type="password" v-model="registerForm.password" />
+          </label>
+          <label>
+            <span class="label-title">Perfil <span class="help-icon" title="Perfil define permissao e contexto de uso.">?</span></span>
+            <select v-model="registerForm.perfil">
+              <option>varejo</option>
+              <option>logistica</option>
+              <option>distribuicao</option>
+            </select>
+          </label>
+          <button class="full" @click="registerUser">Criar conta</button>
+          <p class="result">{{ registerResult }}</p>
+        </template>
+      </section>
+    </div>
+
+    <div v-else class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <h1>Fuel Insight</h1>
+          <p>{{ currentUser?.perfil || "usuario" }}</p>
+        </div>
+        <nav class="menu">
+          <button :class="{active: activeView==='home'}" @click="activeView='home'">Home</button>
+          <button :class="{active: activeView==='predicoes'}" @click="activeView='predicoes'">Predições</button>
+          <button :class="{active: activeView==='analytics'}" @click="activeView='analytics'">Analytics</button>
+          <button :class="{active: activeView==='mercado'}" @click="activeView='mercado'">Mercado</button>
+          <button :class="{active: activeView==='mlops'}" @click="activeView='mlops'">MLOps</button>
+        </nav>
+        <div class="sidebar-footer">
+          <small>Status API</small>
+          <p>{{ healthStatus || 'Não verificado' }}</p>
+          <button @click="logout">Sair</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar card">
+          <div>
+            <h2>{{ viewTitle }}</h2>
+            <p class="muted">Painel comercial com navegação.</p>
+          </div>
+          <div class="topbar-actions">
+            <input v-model="apiUrl" />
+            <button @click="checkHealth">Checar API</button>
+          </div>
+        </header>
+
+        <section v-if="globalMessage" class="alert-banner" :class="globalMessageType">
+          <strong>{{ globalMessage }}</strong>
+        </section>
+
+        <section v-if="activeView==='home'" class="grid-2">
+          <article class="card">
+            <div class="row between">
+              <h3>KPIs Executivos</h3>
+              <button @click="loadHomeData">Atualizar</button>
+            </div>
+            <div class="kpis">
+              <div class="kpi"><span>Total predições</span><strong>{{ dashboard?.data?.total_predicoes ?? '-' }}</strong></div>
+              <div class="kpi"><span>Risco alto</span><strong>{{ dashboard?.data?.predicoes_risco_alto ?? '-' }}</strong></div>
+              <div class="kpi"><span>% risco alto</span><strong>{{ pct(dashboard?.data?.percentual_risco_alto) }}</strong></div>
+              <div class="kpi"><span>Volatilidade 30d</span><strong>{{ pct(dashboard?.data?.volatilidade_mercado_ult_30d) }}</strong></div>
+            </div>
+            <pre>{{ pretty(dashboard) }}</pre>
+          </article>
+
+          <article class="card">
+            <h3>Gráfico: Risco por Região</h3>
+            <canvas id="riskChart" height="150"></canvas>
+            <h3>Gráfico: Distribuição por Faixa</h3>
+            <canvas id="tierChart" height="150"></canvas>
+          </article>
+        </section>
+
+        <section v-if="activeView==='predicoes'" class="grid-2">
+          <article class="card">
+            <div class="row between">
+              <h3>Predição Unitária</h3>
+              <button @click="loadScenarios">Carregar Cenários</button>
+            </div>
+            <div class="batch-help">
+              <p><strong>O que é:</strong> simulação de um único cenário econômico por vez.</p>
+              <p><strong>Objetivo:</strong> prever rapidamente a faixa de preço esperada e apoiar decisão operacional/comercial imediata.</p>
+            </div>
+            <label>
+              <span class="label-title">Cenário rápido <span class="help-icon" title="Seleciona um exemplo pronto vindo da API.">?</span></span>
+              <select v-model.number="quickScenarioIndex" @change="applyScenarioFromExample">
+                <option v-for="(ex, idx) in scenarioExamples" :key="idx" :value="idx">
+                  {{ ex.label || (`Exemplo ${idx + 1} - ${ex.region} / ${ex.subsidy_regime}`) }}
+                </option>
+              </select>
+              <small class="field-note">Escolha um cenário para preencher o formulário automaticamente.</small>
+            </label>
+            <label>
+              <span class="label-title">Ano <span class="help-icon" title="Ano do cenário (1924 a 2035).">?</span></span>
+              <input type="number" min="1924" max="2035" v-model.number="predictForm.year" />
+              <small class="field-note">Ano de referência da simulação econômica.</small>
+            </label>
+            <label>
+              <span class="label-title">Região <span class="help-icon" title="Regiao geografica usada pelo modelo.">?</span></span>
+              <select v-model="predictForm.region">
+                <option v-for="r in regionOptions" :key="r">{{ r }}</option>
+              </select>
+              <small class="field-note">Define o contexto geográfico do cenário.</small>
+            </label>
+            <label>
+              <span class="label-title">País <span class="help-icon" title="Opcional. Use para segmentacao de insights.">?</span></span>
+              <select v-model="predictForm.country">
+                <option value="">(Não informar)</option>
+                <option v-for="c in countryOptionsAll" :key="c" :value="c">{{ c }}</option>
+              </select>
+              <small class="field-note">Opcional: melhora filtros de analytics por país.</small>
+            </label>
+            <label>
+              <span class="label-title">Segmento <span class="help-icon" title="Tipo de cliente para recorte comercial.">?</span></span>
+              <select v-model="predictForm.segmento">
+                <option>varejo</option><option>logistica</option><option>distribuicao</option>
+              </select>
+              <small class="field-note">Varejo: postos e revenda. Logística: transporte. Distribuição: atacado e trading.</small>
+            </label>
+            <label>
+              <span class="label-title">Regime de subsídio <span class="help-icon" title="none: sem subsidio, partial: parcial, heavy: forte subsidio.">?</span></span>
+              <select v-model="predictForm.subsidy_regime">
+                <option v-for="s in subsidyOptions" :key="s">{{ s }}</option>
+              </select>
+              <small class="field-note">none = sem subsídio; partial = parcial; heavy = alto subsídio.</small>
+            </label>
+            <label>
+              <span class="label-title">Produtor de petróleo <span class="help-icon" title="Sim se o pais/regiao for produtor relevante de petroleo.">?</span></span>
+              <select v-model.number="predictForm.is_oil_producer">
+                <option :value="1">Sim (1)</option>
+                <option :value="0">Não (0)</option>
+              </select>
+              <small class="field-note">Indica se o cenário representa país/região produtor relevante de petróleo.</small>
+            </label>
+            <label>
+              <span class="label-title">Crude USD/barrel <span class="help-icon" title="Preco internacional do barril em USD.">?</span></span>
+              <input type="number" min="0" step="0.01" v-model.number="predictForm.crude_oil_usd_per_barrel" />
+              <small class="field-note">Exemplo comum: 82.4</small>
+            </label>
+            <label>
+              <span class="label-title">Imposto % bomba <span class="help-icon" title="Percentual de imposto no preco final da bomba (0 a 100).">?</span></span>
+              <input type="number" min="0" max="100" step="0.01" v-model.number="predictForm.tax_pct_of_pump_price" />
+              <small class="field-note">Percentual de tributos no preço final. Exemplo: 22</small>
+            </label>
+            <label>
+              <span class="label-title">Gasolina real 2024 USD <span class="help-icon" title="Preco da gasolina ajustado para dolar real de 2024.">?</span></span>
+              <input type="number" min="0" step="0.0001" v-model.number="predictForm.gasoline_real_2024usd" />
+              <small class="field-note">Preço ajustado pela inflação. Exemplo: 1.15</small>
+            </label>
+            <button @click="predictSingle">Predizer</button>
+            <pre>{{ pretty(singlePrediction) }}</pre>
+          </article>
+
+          <article class="card">
+            <h3>Predição em Lote</h3>
+            <div class="batch-help">
+              <p><strong>Como usar:</strong></p>
+              <p>1) Edite o JSON com vários cenários dentro de <code>items</code>.</p>
+              <p>2) Cada item deve conter: <code>year</code>, <code>region</code>, <code>subsidy_regime</code>, <code>is_oil_producer</code>, <code>crude_oil_usd_per_barrel</code>, <code>tax_pct_of_pump_price</code>, <code>gasoline_real_2024usd</code>.</p>
+              <p>3) Clique em <strong>Executar Lote</strong>. O retorno mostra <code>data</code> (sucesso) e <code>errors</code> (falhas por índice).</p>
+              <p><strong>O que significa cada campo:</strong></p>
+              <p><code>year</code>: ano do cenário econômico.</p>
+              <p><code>region</code>: região geográfica do cenário (ex.: Latin America, Europe).</p>
+              <p><code>subsidy_regime</code>: nível de subsídio no combustível (<code>none</code>, <code>partial</code>, <code>heavy</code>).</p>
+              <p><code>is_oil_producer</code>: se o cenário representa produtor relevante de petróleo (<code>1</code>=sim, <code>0</code>=não).</p>
+              <p><code>crude_oil_usd_per_barrel</code>: preço internacional do barril em dólar.</p>
+              <p><code>tax_pct_of_pump_price</code>: percentual de impostos no preço final da bomba.</p>
+              <p><code>gasoline_real_2024usd</code>: preço da gasolina ajustado para dólar real de 2024.</p>
+              <p><strong>Exemplo:</strong></p>
+              <pre class="example-code">{{ batchExamplePretty }}</pre>
+            </div>
+            <textarea rows="12" v-model="batchPayload"></textarea>
+            <button @click="predictBatch">Executar Lote</button>
+            <pre>{{ pretty(batchPrediction) }}</pre>
+          </article>
+        </section>
+
+        <section v-if="activeView==='analytics'" class="grid-2">
+          <article class="card">
+            <h3>Insights por Região</h3>
+            <div class="batch-help">
+              <p><strong>Como usar este painel:</strong></p>
+              <p>1) (Opcional) preencha <code>Country</code> e <code>Segmento</code> para filtrar.</p>
+              <p>2) Clique em <strong>Insights</strong> para resumo por região.</p>
+              <p>3) Clique em <strong>Top risco</strong> para ranking das regiões mais críticas.</p>
+              <p>4) Clique em <strong>Histórico</strong> para últimas predições registradas.</p>
+            </div>
+            <div class="row">
+              <label>Country
+                <select v-model="insightFilters.country">
+                  <option value="">(todos)</option>
+                  <option v-for="c in countryOptionsAll" :key="`analytics-${c}`" :value="c">{{ c }}</option>
+                </select>
+              </label>
+              <label>Segmento
+                <select v-model="insightFilters.segmento">
+                  <option value="">(todos)</option><option>varejo</option><option>logistica</option><option>distribuicao</option>
+                </select>
+              </label>
+            </div>
+            <div class="row">
+              <button @click="loadInsights">Insights</button>
+              <button @click="loadRiskTop">Top risco</button>
+              <button @click="loadRecent">Histórico</button>
+            </div>
+            <div v-if="analyticsMessage" class="mini-message">{{ analyticsMessage }}</div>
+            <pre>{{ pretty(regionInsights) }}</pre>
+            <pre>{{ pretty(riskTop) }}</pre>
+            <pre>{{ pretty(recentPredictions) }}</pre>
+          </article>
+
+          <article class="card">
+            <h3>Alertas</h3>
+            <div class="batch-help">
+              <p><strong>Como interpretar:</strong></p>
+              <p>Mostra regiões com concentração de cenários caros.</p>
+              <p><code>severidade</code> indica prioridade de ação e <code>qtd_predicoes_risco_alto</code> mostra intensidade do risco.</p>
+            </div>
+            <button @click="loadAlerts">Carregar alertas</button>
+            <pre>{{ pretty(alerts) }}</pre>
+          </article>
+        </section>
+
+        <section v-if="activeView==='mercado'" class="card">
+          <h3>Mercado Comparativo</h3>
+          <div class="row">
+            <label>
+              <span class="label-title">Symbol <span class="help-icon" title="Ativo de mercado para comparativo externo.">?</span></span>
+              <select v-model="marketForm.symbol">
+                <option value="BZ=F">Brent (BZ=F)</option>
+                <option value="CL=F">WTI (CL=F)</option>
+                <option value="USDBRL=X">USD/BRL (USDBRL=X)</option>
+                <option value="GC=F">Gold (GC=F)</option>
+              </select>
+            </label>
+            <label>
+              <span class="label-title">Dias <span class="help-icon" title="Janela historica para o comparativo.">?</span></span>
+              <select v-model.number="marketForm.period_days">
+                <option :value="7">7</option>
+                <option :value="15">15</option>
+                <option :value="30">30</option>
+                <option :value="60">60</option>
+                <option :value="90">90</option>
+                <option :value="180">180</option>
+                <option :value="365">365</option>
+              </select>
+            </label>
+            <button @click="loadMarket">Buscar</button>
+          </div>
+          <canvas id="marketChart" height="110"></canvas>
+          <pre>{{ pretty(marketData) }}</pre>
+        </section>
+
+        <section v-if="activeView==='mlops'" class="grid-2">
+          <article class="card">
+            <h3>Registrar Modelo</h3>
+            <div class="batch-help">
+              <p><strong>Objetivo desta seção:</strong></p>
+              <p>Registrar uma nova versão de modelo para governança e histórico de desempenho.</p>
+              <p><strong>Como usar:</strong></p>
+              <p>1) Informe <code>Versão</code> (ex.: v2).</p>
+              <p>2) Selecione o <code>Algoritmo</code> usado.</p>
+              <p>3) Informe a <code>Acurácia</code> validada (0 a 1).</p>
+              <p>4) Preencha <code>Model path</code> com o artefato/caminho do modelo e clique em <strong>Registrar</strong>.</p>
+            </div>
+            <label><span class="label-title">Versão <span class="help-icon" title="Identificador unico da versao do modelo (ex.: v1, v2).">?</span></span><input v-model="modelRegister.version" /></label>
+            <label>
+              <span class="label-title">Algoritmo <span class="help-icon" title="Algoritmo principal da versao registrada.">?</span></span>
+              <select v-model="modelRegister.algorithm">
+                <option>DecisionTree</option>
+                <option>SVM</option>
+                <option>KNN</option>
+                <option>NaiveBayes</option>
+              </select>
+            </label>
+            <label><span class="label-title">Acurácia <span class="help-icon" title="Metrica de validacao da versao (0 a 1).">?</span></span><input type="number" min="0" max="1" step="0.0001" v-model.number="modelRegister.accuracy" /></label>
+            <label><span class="label-title">Model path <span class="help-icon" title="Caminho/artefato do modelo associado a versao.">?</span></span><input v-model="modelRegister.model_path" /></label>
+            <button @click="registerModel">Registrar</button>
+            <p class="result">{{ modelRegisterResult }}</p>
+          </article>
+
+          <article class="card">
+            <h3>Ativar e listar</h3>
+            <div class="batch-help">
+              <p><strong>Objetivo desta seção:</strong></p>
+              <p>Promover uma versão registrada para produção e consultar o catálogo de versões.</p>
+              <p><strong>Como usar:</strong></p>
+              <p>1) Em <code>Versão</code>, informe qual versão deseja ativar.</p>
+              <p>2) Em <code>Min accuracy</code>, defina o limite mínimo aceito.</p>
+              <p>3) Clique em <strong>Ativar</strong> para validar e promover.</p>
+              <p>4) Clique em <strong>Listar</strong> para ver versões registradas e status da versão ativa.</p>
+            </div>
+            <label><span class="label-title">Versão <span class="help-icon" title="Versao que sera promovida para ativa.">?</span></span><input v-model="modelActivate.version" /></label>
+            <label><span class="label-title">Min accuracy <span class="help-icon" title="Limiar minimo aceito para ativacao da versao.">?</span></span><input type="number" min="0" max="1" step="0.01" v-model.number="modelActivate.min_accuracy" /></label>
+            <div class="row">
+              <button @click="activateModel">Ativar</button>
+              <button @click="listModels">Listar</button>
+            </div>
+            <p class="result">{{ modelActivateResult }}</p>
+            <pre>{{ pretty(modelsList) }}</pre>
+          </article>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script>
+    const { createApp } = Vue;
+
+    createApp({
+      data() {
+        return {
+          authMode: "login",
+          activeView: "home",
+          apiUrl: "http://127.0.0.1:5000",
+          token: localStorage.getItem("fuel_token") || "",
+          currentUser: JSON.parse(localStorage.getItem("fuel_user") || "null"),
+          healthStatus: "",
+          globalMessage: "",
+          globalMessageType: "info",
+          analyticsMessage: "",
+          registerForm: { username: "", password: "", perfil: "varejo" },
+          loginForm: { username: "", password: "" },
+          registerResult: "",
+          loginResult: "",
+          scenarios: null,
+          predictForm: {
+            year: 2024, region: "Latin America", country: "", segmento: "varejo", subsidy_regime: "partial",
+            is_oil_producer: 1, crude_oil_usd_per_barrel: 82.4, tax_pct_of_pump_price: 22.0, gasoline_real_2024usd: 1.15
+          },
+          quickScenarioIndex: -1,
+          batchExample: {
+            items: [
+              {
+                year: 2024,
+                region: "Latin America",
+                subsidy_regime: "partial",
+                is_oil_producer: 1,
+                crude_oil_usd_per_barrel: 82.4,
+                tax_pct_of_pump_price: 22.0,
+                gasoline_real_2024usd: 1.15
+              },
+              {
+                year: 2024,
+                region: "Europe",
+                subsidy_regime: "none",
+                is_oil_producer: 0,
+                crude_oil_usd_per_barrel: 84.0,
+                tax_pct_of_pump_price: 48.0,
+                gasoline_real_2024usd: 1.85
+              }
+            ]
+          },
+          batchPayload: JSON.stringify({ items: [{ year: 2024, region: "Latin America", subsidy_regime: "partial", is_oil_producer: 1, crude_oil_usd_per_barrel: 82.4, tax_pct_of_pump_price: 22.0, gasoline_real_2024usd: 1.15 }] }, null, 2),
+          singlePrediction: null, batchPrediction: null, recentLimit: 20, recentPredictions: null,
+          countriesFromRecords: [],
+          insightFilters: { country: "", segmento: "" }, regionInsights: null, riskLimit: 5, riskTop: null,
+          dashboard: null, alerts: null, marketForm: { symbol: "BZ=F", period_days: 30 }, marketData: null,
+          modelRegister: { version: "v1", algorithm: "DecisionTree", accuracy: 0.91, model_path: "model_v1.pkl" },
+          modelActivate: { version: "v1", min_accuracy: 0.8 }, modelRegisterResult: "", modelActivateResult: "", modelsList: null,
+          riskChart: null, tierChart: null, marketChart: null
+        };
+      },
+      computed: {
+        isAuthenticated() { return !!this.token; },
+        viewTitle() {
+          return { home: "Home Executiva", predicoes: "Predições", analytics: "Analytics", mercado: "Mercado Externo", mlops: "MLOps" }[this.activeView];
+        },
+        regionOptions() {
+          return this.scenarios?.data?.region_options || ["Latin America", "North America", "Europe", "Asia", "Asia Pacific", "Middle East", "Africa", "Eurasia", "Europe/Asia"];
+        },
+        subsidyOptions() {
+          return this.scenarios?.data?.subsidy_regime_options || ["none", "partial", "heavy"];
+        },
+        scenarioExamples() {
+          const estrategicos = [
+            {
+              label: "Estratégico 1: Equilíbrio de Mercado",
+              year: 2024,
+              region: "Latin America",
+              country: "Brazil",
+              segmento: "varejo",
+              subsidy_regime: "partial",
+              is_oil_producer: 1,
+              crude_oil_usd_per_barrel: 82.4,
+              tax_pct_of_pump_price: 22.0,
+              gasoline_real_2024usd: 1.15
+            },
+            {
+              label: "Estratégico 2: Pressão Tributária Alta",
+              year: 2024,
+              region: "Europe",
+              country: "Germany",
+              segmento: "distribuicao",
+              subsidy_regime: "none",
+              is_oil_producer: 0,
+              crude_oil_usd_per_barrel: 84.0,
+              tax_pct_of_pump_price: 48.0,
+              gasoline_real_2024usd: 1.85
+            },
+            {
+              label: "Estratégico 3: Subsídio Forte e Oferta",
+              year: 2024,
+              region: "Middle East",
+              country: "Saudi Arabia",
+              segmento: "logistica",
+              subsidy_regime: "heavy",
+              is_oil_producer: 1,
+              crude_oil_usd_per_barrel: 80.0,
+              tax_pct_of_pump_price: 8.0,
+              gasoline_real_2024usd: 0.72
+            }
+          ];
+          return estrategicos;
+        },
+        countryOptionsAll() {
+          const fromScenarios = (this.scenarios?.data?.country_options || [])
+            .filter((c) => typeof c === "string" && c.trim() !== "");
+          const fromRecords = this.countriesFromRecords.filter((c) => typeof c === "string" && c.trim() !== "");
+          const fromExamples = this.scenarioExamples
+            .map((ex) => ex.country)
+            .filter((c) => typeof c === "string" && c.trim() !== "");
+          return [...new Set([...fromScenarios, ...fromRecords, ...fromExamples])].sort();
+        },
+        batchExamplePretty() {
+          return JSON.stringify(this.batchExample, null, 2);
+        }
+      },
+      methods: {
+        pretty(obj) { return obj == null ? "" : JSON.stringify(obj, null, 2); },
+        pct(v) { return v == null ? "-" : `${Number(v).toFixed(2)}%`; },
+        sanitizePredictionPayload(payload) {
+          const clean = { ...payload };
+          if (!clean.country || String(clean.country).trim() === "") {
+            delete clean.country;
+          }
+          return clean;
+        },
+        authHeaders() { return this.token ? { "Content-Type": "application/json", Authorization: `Bearer ${this.token}` } : { "Content-Type": "application/json" }; },
+        async call(path, options = {}) {
+          let response;
+          try {
+            response = await fetch(`${this.apiUrl}${path}`, options);
+          } catch (err) {
+            throw new Error(`Não foi possível conectar à API em ${this.apiUrl}. Verifique se o backend está ativo e use "Checar API".`);
+          }
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            if (response.status === 401) {
+              this.handleUnauthorized();
+              throw new Error("Sessão expirada ou token inválido. Faça login novamente.");
+            }
+            throw new Error(data.message || `Erro HTTP ${response.status}`);
+          }
+          return data;
+        },
+        setGlobalMessage(message, type = "info") {
+          this.globalMessage = message;
+          this.globalMessageType = type;
+        },
+        clearGlobalMessage() {
+          this.globalMessage = "";
+        },
+        handleUnauthorized() {
+          this.setGlobalMessage("Sessão expirada. Faça login novamente para continuar.", "warn");
+          this.logout();
+        },
+        async checkHealth() {
+          try {
+            const data = await this.call("/api/saude");
+            this.healthStatus = `${data.status} - ${data.mensagem}`;
+            this.clearGlobalMessage();
+          }
+          catch (e) { this.healthStatus = e.message; }
+        },
+        async registerUser() {
+          try {
+            const data = await this.call("/api/autenticacao/registrar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this.registerForm) });
+            this.registerResult = data.message;
+            this.authMode = "login";
+          } catch (e) { this.registerResult = e.message; }
+        },
+        async loginUser() {
+          try {
+            const data = await this.call("/api/autenticacao/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this.loginForm) });
+            this.token = data.access_token || "";
+            this.currentUser = data.data || null;
+            localStorage.setItem("fuel_token", this.token);
+            localStorage.setItem("fuel_user", JSON.stringify(this.currentUser));
+            this.loginResult = data.message;
+            this.setGlobalMessage(`Bem-vindo, ${this.currentUser?.username || "usuário"}!`, "success");
+            this.activeView = "home";
+            await this.loadScenarios();
+            await this.loadHomeData();
+            await this.refreshCountriesFromRecords();
+          } catch (e) { this.loginResult = e.message; }
+        },
+        logout() {
+          this.token = "";
+          this.currentUser = null;
+          localStorage.removeItem("fuel_token");
+          localStorage.removeItem("fuel_user");
+          this.activeView = "home";
+          this.analyticsMessage = "";
+        },
+        async loadScenarios() {
+          try {
+            this.scenarios = await this.call("/api/combustivel/cenarios", { headers: this.authHeaders() });
+            if (this.scenarioExamples.length > 0) {
+              this.quickScenarioIndex = 0;
+              this.applyScenarioFromExample();
+            }
+          }
+          catch (e) { this.scenarios = { error: e.message }; }
+        },
+        applyScenarioFromExample() {
+          const idx = Number(this.quickScenarioIndex);
+          if (Number.isNaN(idx) || idx < 0 || idx >= this.scenarioExamples.length) return;
+          this.predictForm = { ...this.predictForm, ...this.scenarioExamples[idx] };
+        },
+        async predictSingle() {
+          try {
+            const payload = this.sanitizePredictionPayload(this.predictForm);
+            this.singlePrediction = await this.call("/api/combustivel/predizer", { method: "POST", headers: this.authHeaders(), body: JSON.stringify(payload) });
+          }
+          catch (e) { this.singlePrediction = { error: e.message }; }
+        },
+        async predictBatch() {
+          try {
+            const payload = JSON.parse(this.batchPayload);
+            if (Array.isArray(payload.items)) {
+              payload.items = payload.items.map((item) => this.sanitizePredictionPayload(item));
+            }
+            this.batchPrediction = await this.call("/api/combustivel/predizer-lote", { method: "POST", headers: this.authHeaders(), body: JSON.stringify(payload) });
+          } catch (e) { this.batchPrediction = { error: e.message }; }
+        },
+        async loadRecent() {
+          try {
+            this.recentPredictions = await this.call(`/api/combustivel/predicoes/recentes?limit=${this.recentLimit}`, { headers: this.authHeaders() });
+            this.collectCountriesFromRows(this.recentPredictions?.data || []);
+            this.analyticsMessage = "Histórico carregado com sucesso.";
+          }
+          catch (e) { this.recentPredictions = { error: e.message }; }
+        },
+        collectCountriesFromRows(rows) {
+          const countries = rows
+            .map((row) => row?.country)
+            .filter((c) => typeof c === "string" && c.trim() !== "");
+          this.countriesFromRecords = [...new Set([...this.countriesFromRecords, ...countries])].sort();
+        },
+        async refreshCountriesFromRecords() {
+          try {
+            const resp = await this.call("/api/combustivel/predicoes/recentes?limit=200", { headers: this.authHeaders() });
+            this.collectCountriesFromRows(resp?.data || []);
+          } catch (e) {
+            // Mantem app funcional mesmo sem registros suficientes.
+          }
+        },
+        async loadInsights() {
+          try {
+            const params = new URLSearchParams();
+            if (this.insightFilters.country) params.set("country", this.insightFilters.country);
+            if (this.insightFilters.segmento) params.set("segmento", this.insightFilters.segmento);
+            const suffix = params.toString() ? `?${params.toString()}` : "";
+            this.regionInsights = await this.call(`/api/combustivel/insights/regioes${suffix}`, { headers: this.authHeaders() });
+            this.analyticsMessage = "Insights por região carregados.";
+          } catch (e) { this.regionInsights = { error: e.message }; }
+        },
+        async loadRiskTop() {
+          try {
+            this.riskTop = await this.call(`/api/combustivel/insights/top-regioes-risco?limit=${this.riskLimit}`, { headers: this.authHeaders() });
+            this.analyticsMessage = "Top regiões de risco carregado.";
+          }
+          catch (e) { this.riskTop = { error: e.message }; }
+        },
+        async loadDashboard() {
+          try { this.dashboard = await this.call("/api/combustivel/dashboard-executivo", { headers: this.authHeaders() }); }
+          catch (e) { this.dashboard = { error: e.message }; }
+        },
+        async loadAlerts() {
+          try { this.alerts = await this.call("/api/combustivel/alertas", { headers: this.authHeaders() }); }
+          catch (e) { this.alerts = { error: e.message }; }
+        },
+        async loadMarket() {
+          try {
+            this.marketData = await this.call(`/api/mercado/comparativo?symbol=${encodeURIComponent(this.marketForm.symbol)}&period_days=${this.marketForm.period_days}`, { headers: this.authHeaders() });
+            this.$nextTick(() => this.renderMarketChart());
+          }
+          catch (e) {
+            this.marketData = { error: e.message };
+            if (this.marketChart) {
+              this.marketChart.destroy();
+              this.marketChart = null;
+            }
+          }
+        },
+        async registerModel() {
+          try {
+            const data = await this.call("/api/modelos/registrar", { method: "POST", headers: this.authHeaders(), body: JSON.stringify(this.modelRegister) });
+            this.modelRegisterResult = data.message;
+          } catch (e) { this.modelRegisterResult = e.message; }
+        },
+        async activateModel() {
+          try {
+            const data = await this.call("/api/modelos/ativar", { method: "POST", headers: this.authHeaders(), body: JSON.stringify(this.modelActivate) });
+            this.modelActivateResult = data.message;
+          } catch (e) { this.modelActivateResult = e.message; }
+        },
+        async listModels() {
+          try { this.modelsList = await this.call("/api/modelos", { headers: this.authHeaders() }); }
+          catch (e) { this.modelsList = { error: e.message }; }
+        },
+        async loadHomeData() {
+          await Promise.all([this.loadDashboard(), this.loadRiskTop(), this.loadInsights()]);
+          this.$nextTick(() => this.renderHomeCharts());
+        },
+        renderHomeCharts() {
+          const riskCanvas = document.getElementById("riskChart");
+          const tierCanvas = document.getElementById("tierChart");
+          if (!riskCanvas || !tierCanvas) return;
+
+          const riskRows = this.riskTop?.data || [];
+          const riskLabels = riskRows.map(r => r.region);
+          const riskValues = riskRows.map(r => r.high_risk_predictions);
+
+          if (this.riskChart) this.riskChart.destroy();
+          this.riskChart = new Chart(riskCanvas, {
+            type: "bar",
+            data: { labels: riskLabels, datasets: [{ label: "Predições de risco alto", data: riskValues }] },
+            options: { responsive: true, plugins: { legend: { labels: { color: "#e2e8f0" } } }, scales: { x: { ticks: { color: "#e2e8f0" } }, y: { ticks: { color: "#e2e8f0" } } } }
+          });
+
+          const insightRows = this.regionInsights?.data || [];
+          const tierCount = {};
+          insightRows.forEach(r => { tierCount[r.predicted_price_tier] = (tierCount[r.predicted_price_tier] || 0) + r.predictions; });
+          const tierLabels = Object.keys(tierCount);
+          const tierValues = Object.values(tierCount);
+
+          if (this.tierChart) this.tierChart.destroy();
+          this.tierChart = new Chart(tierCanvas, {
+            type: "doughnut",
+            data: { labels: tierLabels, datasets: [{ data: tierValues }] },
+            options: { responsive: true, plugins: { legend: { labels: { color: "#e2e8f0" } } } }
+          });
+        },
+        renderMarketChart() {
+          const marketCanvas = document.getElementById("marketChart");
+          const points = this.marketData?.data?.pontos || [];
+          if (!marketCanvas || !Array.isArray(points) || points.length === 0) return;
+
+          const labels = points.map((p) => p.date);
+          const values = points.map((p) => Number(p.close));
+          const symbol = this.marketData?.data?.symbol || this.marketForm.symbol;
+
+          if (this.marketChart) this.marketChart.destroy();
+          this.marketChart = new Chart(marketCanvas, {
+            type: "line",
+            data: {
+              labels,
+              datasets: [{
+                label: `${symbol} - preço de fechamento`,
+                data: values,
+                borderColor: "#38bdf8",
+                backgroundColor: "rgba(56, 189, 248, 0.2)",
+                pointRadius: 2,
+                tension: 0.25,
+                fill: true
+              }]
+            },
+            options: {
+              responsive: true,
+              plugins: { legend: { labels: { color: "#e2e8f0" } } },
+              scales: {
+                x: { ticks: { color: "#e2e8f0" } },
+                y: { ticks: { color: "#e2e8f0" } }
+              }
+            }
+          });
+        }
+      },
+      mounted() {
+        this.checkHealth();
+        if (this.isAuthenticated) {
+          this.loadScenarios();
+          this.loadHomeData();
+          this.refreshCountriesFromRecords();
+        }
+      }
+    }).mount("#app");
+  </script>
+</body>
+</html>
