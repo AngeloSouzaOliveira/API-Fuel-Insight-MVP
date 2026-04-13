@@ -140,7 +140,7 @@
             <label>
               <span class="label-title">Região <span class="help-icon" title="Regiao geografica usada pelo modelo.">?</span></span>
               <select v-model="predictForm.region">
-                <option v-for="r in regionOptions" :key="r">{{ r }}</option>
+                <option v-for="r in regionOptions" :key="r" :value="r">{{ r }}</option>
               </select>
               <small class="field-note">Define o contexto geográfico do cenário.</small>
             </label>
@@ -162,7 +162,7 @@
             <label>
               <span class="label-title">Regime de subsídio <span class="help-icon" title="none: sem subsidio, partial: parcial, heavy: forte subsidio.">?</span></span>
               <select v-model="predictForm.subsidy_regime">
-                <option v-for="s in subsidyOptions" :key="s">{{ s }}</option>
+                <option v-for="s in subsidyOptions" :key="s" :value="s">{{ s }}</option>
               </select>
               <small class="field-note">none = sem subsídio; partial = parcial; heavy = alto subsídio.</small>
             </label>
@@ -475,6 +475,7 @@
         pct(v) { return v == null ? "-" : `${Number(v).toFixed(2)}%`; },
         sanitizePredictionPayload(payload) {
           const clean = { ...payload };
+          delete clean.label;
           if (!clean.country || String(clean.country).trim() === "") {
             delete clean.country;
           }
