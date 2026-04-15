@@ -22,10 +22,6 @@ Aplicações típicas:
 - simulação de cenários (imposto, subsídio, petróleo) para análise estratégica;
 - suporte a operações de distribuição, logística e varejo com visão orientada a dados.
 
-## Nome do projeto
-
-**Fuel-Insight-MVP**
-
 ## O que pode subir para o repositório (GitHub)
 
 Pode enviar:
@@ -358,26 +354,4 @@ Se o repositório já teve `.env` versionado no passado, o ideal é:
 2. rotacionar chaves/tokens já expostos,
 3. manter somente `.env.example` público.
 
-## Evidências para a entrega
 
-- Notebook do processo de ML (Colab): `notebooks/` + link público do Colab.
-- Código full stack completo: `backend/` e `frontend/`.
-- Testes automatizados com threshold: `backend/test/`.
-- Documentação da API: `http://127.0.0.1:5000/apidocs`.
-
-## Checklist final de submissão
-
-- [ ] Link do repositório público no GitHub.
-- [ ] Link do notebook no Colab (executável do início ao fim).
-- [ ] Vídeo de até 3 minutos mostrando a aplicação funcionando.
-- [ ] Confirmação de que `.env` não foi versionado.
-- [ ] Execução de testes (`pytest`) com sucesso.
-
-## Roteiro curto para vídeo (até 3 min)
-
-1. Contexto do problema e dataset escolhido (classificação de `price_tier`).
-2. Execução rápida da API e abertura do Swagger.
-3. Fluxo de autenticação (registro/login) e uso do token JWT.
-4. Predição unitária e predição em lote.
-5. Dashboard/insights/alertas e exemplo de endpoint de mercado.
-6. Teste automatizado de desempenho do modelo com PyTest.
